@@ -27,6 +27,15 @@ generated game code. Optional third-party instruction oracles remain in the
 consumer development repositories and are not dependencies of this source
 package.
 
+The Genesis profile also exposes `codegen_emit_step_semantics()` for a consumer
+with explicit PCs and independently scheduled CPU contexts. It emits the same
+native arithmetic/effective-address C as the established function emitter, with
+consumer-owned register/memory bindings, and omits virtual return-stack tracking,
+widening and game hooks. Control, privilege and exception instructions return
+false without output; the consumer must implement their CPU behavior or report
+a miss. The caller owns PC/cycle accounting, CPU-model checks and writable-code
+identity guards. The legacy function-emission path and defaults are unchanged.
+
 ## Reconciliation direction
 
 1. Keep common decoder/validator semantics covered by synthetic tests from
