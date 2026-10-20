@@ -1,5 +1,14 @@
 set(M68K_RECOMP_CORE_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 
+# Portable MC68000 context/control runtime for instruction-sized AOT backends.
+# This does not change either established function-emission profile.
+function(m68k_recomp_step_sources out_var)
+    set(${out_var} "${M68K_RECOMP_CORE_ROOT}/runtime/m68k_step.c" PARENT_SCOPE)
+endfunction()
+function(m68k_recomp_step_include_dirs out_var)
+    set(${out_var} "${M68K_RECOMP_CORE_ROOT}/runtime" PARENT_SCOPE)
+endfunction()
+
 function(m68k_recomp_core_sources out_var profile)
     if(profile STREQUAL "genesis")
         set(profile_dir "${M68K_RECOMP_CORE_ROOT}/profiles/genesis")

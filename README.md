@@ -36,6 +36,21 @@ false without output; the consumer must implement their CPU behavior or report
 a miss. The caller owns PC/cycle accounting, CPU-model checks and writable-code
 identity guards. The legacy function-emission path and defaults are unchanged.
 
+`runtime/m68k_step` provides a portable MC68000 execution context for those
+generated operations: independent registers/stacks, physical memory callbacks,
+resumable bus waits, instruction-byte guards, normal exception frames,
+supervisor transitions, STOP/RTE/RESET, interrupt masks and level-seven edges,
+trace and emulated cycle counters. It contains no instruction decoder or
+interpreter. `m68k_recomp_step_sources()` and
+`m68k_recomp_step_include_dirs()` expose it to source-package consumers.
+The root CMake project also builds `m68k_step_runtime` and its synthetic tests.
+
+This runtime currently stops and reports bus/address faults; construction of
+MC68000 group-zero frames remains unimplemented. Snapshots must occur between
+completed instructions. A complete step frontend, code registry/correctness
+floor and system scheduler remain consumer work; the context tests do not
+establish BIOS/disc boot or a completed Sega CD backend.
+
 ## Reconciliation direction
 
 1. Keep common decoder/validator semantics covered by synthetic tests from
