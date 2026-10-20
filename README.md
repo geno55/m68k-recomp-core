@@ -34,7 +34,16 @@ consumer-owned register/memory bindings, and omits virtual return-stack tracking
 widening and game hooks. Control, privilege and exception instructions return
 false without output; the consumer must implement their CPU behavior or report
 a miss. The caller owns PC/cycle accounting, CPU-model checks and writable-code
-identity guards. The legacy function-emission path and defaults are unchanged.
+identity guards. `codegen_emit_step_operation()` adds explicit guest control
+transfers, supervisor/stack operations and normal exceptions through
+`runtime/m68k_step`; it requires a context parameter named `ctx`. It also emits
+DIV and CHK exceptions. Unknown operations return false. Nonzero divide costs
+currently use the manual's nominal maximum; operand-dependent timing still
+needs qualification.
+
+The shared DIVU emitter now rejects quotient 65536 as overflow rather than
+truncating it to zero. Division by zero in the legacy function ABI reports its
+unimplemented vector-five exception loudly instead of silently continuing.
 
 `runtime/m68k_step` provides a portable MC68000 execution context for those
 generated operations: independent registers/stacks, physical memory callbacks,
@@ -49,7 +58,10 @@ This runtime currently stops and reports bus/address faults; construction of
 MC68000 group-zero frames remains unimplemented. Snapshots must occur between
 completed instructions. A complete step frontend, code registry/correctness
 floor and system scheduler remain consumer work; the context tests do not
-establish BIOS/disc boot or a completed Sega CD backend.
+establish BIOS/disc boot or a completed Sega CD backend. Specification references:
+[MC68000 User's Manual](https://www.nxp.com/docs/en/reference-manual/MC68000UM.pdf),
+sections 6 and 8, and
+[M68000 Programmer's Reference Manual](https://www.nxp.com/docs/en/reference-manual/M68000PRM.pdf).
 
 ## Reconciliation direction
 

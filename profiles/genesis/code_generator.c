@@ -2291,13 +2291,15 @@ static void emit_mem_shift(FILE *f, const M68KInstr *instr,
     fprintf(f, "  }\n");
 }
 
+static unsigned step_operand_cost(unsigned ea,bool is_long);
+
 static void emit_instr(FILE *f, const GenesisRom *rom,
                         const M68KInstr *instr,
                         const AddrSet *instrs,
                         bool *skip_until_label,
                         int *has_sp_adjust,
                         const char *func_name,
-                        uint32_t func_addr) {
+                        uint32_t func_addr, bool step_runtime) {
     uint32_t addr = instr->addr;
     M68KSize sz   = instr->size;
     s_diag_func_name = func_name;
@@ -3678,7 +3680,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
     /* ------------------------------------------------------------------ */
     case MN_DIVU: {
         int dreg = instr->reg;
-        char tmp2[32];
+        char tmp2[32], zero[192];
+        if(step_runtime)snprintf(zero,sizeof zero,"m68k_step_exception(ctx,5,g_cpu.PC,%u); return;",38u+step_operand_cost((unsigned)instr->src_ea,false));
+        else snprintf(zero,sizeof zero,"g_cpu.PC=0x%06Xu; m68k_trap_vector(5u); return;",addr);
         snprintf(tmp2, sizeof(tmp2), "_tv%06X", addr);
         emit_ea_load(f, instr, instr->src_ea, M68K_SIZE_W, &er, tmp2, src_expr);
         /* HW-accurate (matches clown68000 / the Tier-3 floor): on quotient
@@ -3687,8 +3691,8 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
         fprintf(f,
             "  { uint16_t _dv = (uint16_t)(%s); uint32_t _dest = g_cpu.D[%d];\n"
             "    g_cpu.SR &= ~(1u<<0);\n"
-            "    if (_dv == 0u) { g_cpu.SR &= ~((1u<<3)|(1u<<2)|(1u<<1)); }\n"
-            "    else if ((uint32_t)_dv >= (_dest >> 16)) {\n"
+            "    if (_dv == 0u) { %s }\n"
+            "    else if ((uint32_t)_dv > (_dest >> 16)) {\n"
             "      uint32_t _quo = _dest / _dv, _rem = _dest %% _dv;\n"
             "      g_cpu.D[%d] = (_quo & 0xFFFFu) | ((_rem & 0xFFFFu) << 16);\n"
             "      g_cpu.SR &= ~((1u<<3)|(1u<<2)|(1u<<1));\n"
@@ -3696,14 +3700,16 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             "      if (_quo == 0u)     g_cpu.SR |= (1u<<2);\n"
             "    } else { g_cpu.SR |= (1u<<1); g_cpu.SR |= (1u<<3); g_cpu.SR &= ~(1u<<2); }\n"
             "  }\n",
-            src_expr, dreg, dreg);
+            src_expr, dreg, zero, dreg);
         break;
     }
 
     /* ------------------------------------------------------------------ */
     case MN_DIVS: {
         int dreg = instr->reg;
-        char tmp2[32];
+        char tmp2[32], zero[192];
+        if(step_runtime)snprintf(zero,sizeof zero,"m68k_step_exception(ctx,5,g_cpu.PC,%u); return;",38u+step_operand_cost((unsigned)instr->src_ea,false));
+        else snprintf(zero,sizeof zero,"g_cpu.PC=0x%06Xu; m68k_trap_vector(5u); return;",addr);
         snprintf(tmp2, sizeof(tmp2), "_tv%06X", addr);
         emit_ea_load(f, instr, instr->src_ea, M68K_SIZE_W, &er, tmp2, src_expr);
         /* HW-accurate signed divide (matches clown68000 / the Tier-3 floor):
@@ -3712,7 +3718,7 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
         fprintf(f,
             "  { int16_t _dv = (int16_t)(%s); uint32_t _dest = g_cpu.D[%d];\n"
             "    g_cpu.SR &= ~(1u<<0);\n"
-            "    if (_dv == 0) { g_cpu.SR &= ~((1u<<3)|(1u<<2)|(1u<<1)); }\n"
+            "    if (_dv == 0) { %s }\n"
             "    else {\n"
             "      int _sn = (_dv < 0), _dn = ((int32_t)_dest < 0); int _rn = (_sn != _dn);\n"
             "      uint32_t _asrc = _sn ? (uint32_t)(0 - (int32_t)_dv) : (uint32_t)_dv;\n"
@@ -3731,7 +3737,7 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             "      } else { g_cpu.SR |= (1u<<1); g_cpu.SR |= (1u<<3); g_cpu.SR &= ~(1u<<2); }\n"
             "    }\n"
             "  }\n",
-            src_expr, dreg, dreg);
+            src_expr, dreg, zero, dreg);
         break;
     }
 
@@ -4504,12 +4510,158 @@ bool codegen_emit_step_semantics(FILE *f, const GenesisRom *rom,
     AddrSet instructions = {0};
     bool skip = false;
     int stack_accounting = 0;
-    emit_instr(f, rom, ins, &instructions, &skip, &stack_accounting, "<step>", ins->addr);
+    emit_instr(f, rom, ins, &instructions, &skip, &stack_accounting, "<step>", ins->addr, false);
     s_ws_sites = saved_sites; s_ws_site_count = saved_count;
     s_reverse_debug = saved_reverse;
     s_diag_func_name = saved_name; s_diag_func_addr = saved_addr; s_diag_instr = saved_ins;
     addrset_free(&instructions);
     return !skip && !ferror(f);
+}
+
+static unsigned step_operand_cost(unsigned ea,bool is_long)
+{
+    unsigned mode=(ea>>3)&7, reg=ea&7, cost;
+    if(mode<2)return 0;
+    if(mode==2 || mode==3)cost=4;
+    else if(mode==4)cost=6;
+    else if(mode==5)cost=8;
+    else if(mode==6)cost=10;
+    else if(reg==0 || reg==2)cost=8;
+    else if(reg==1)cost=12;
+    else if(reg==3)cost=10;
+    else if(reg==4)cost=4;
+    else return 0;
+    return cost+(is_long?4u:0u);
+}
+
+static unsigned step_jump_cost(unsigned ea, bool call)
+{
+    unsigned mode=(ea>>3)&7, reg=ea&7, extra;
+    if(mode==2)extra=0;
+    else if(mode==5)extra=2;
+    else if(mode==6)extra=6;
+    else if(mode==7 && (reg==0 || reg==2))extra=2;
+    else if(mode==7 && reg==1)extra=4;
+    else if(mode==7 && reg==3)extra=6;
+    else return 0;
+    return (call?16u:8u)+extra;
+}
+
+static bool emit_step_control(FILE *f,const GenesisRom *rom,const M68KInstr *ins)
+{
+    ExtReader er;er_init(&er,ins);
+    char expr[256], tmp[32];snprintf(tmp,sizeof tmp,"_step%06X",ins->addr);
+    uint32_t next=(ins->addr+2u*ins->word_count)&0xFFFFFFu;
+    switch(ins->mnemonic) {
+    case MN_RTS:
+        fprintf(f,"  ctx->charge=16; g_cpu.PC=m68k_read32(g_cpu.A[7])&0xFFFFFFu; g_cpu.A[7]+=4;\n");return true;
+    case MN_RTE:
+        fprintf(f,"  ctx->charge=20; m68k_step_rte(ctx);\n");return true;
+    case MN_RTR:
+        fprintf(f,"  ctx->charge=20; { uint32_t sp=g_cpu.A[7]; uint16_t ccr=m68k_read16(sp);\n"
+                  "    uint32_t pc=m68k_read32(sp+2); g_cpu.A[7]=sp+6;\n"
+                  "    g_cpu.SR=(uint16_t)((g_cpu.SR&0xFF00u)|(ccr&31u)); g_cpu.PC=pc&0xFFFFFFu; }\n");return true;
+    case MN_STOP:
+        fprintf(f,"  ctx->charge=4; m68k_step_stop(ctx,0x%04Xu);\n",(unsigned)(ins->imm32&65535));return true;
+    case MN_RESET:
+        fprintf(f,"  ctx->charge=132; m68k_step_reset_devices(ctx);\n");return true;
+    case MN_TRAP:
+        fprintf(f,"  m68k_step_exception(ctx,%uu,g_cpu.PC,34);\n",32u+(unsigned)(ins->imm32&15));return true;
+    case MN_TRAPV:
+        fprintf(f,"  ctx->charge=4; if(g_cpu.SR&2u)m68k_step_exception(ctx,7,g_cpu.PC,34);\n");return true;
+    case MN_ILLEGAL: case MN_MOVEC: {
+        unsigned top=ins->words[0]>>12, vector=top==10?10u:top==15?11u:4u;
+        fprintf(f,"  m68k_step_exception(ctx,%uu,0x%06Xu,34);\n",vector,ins->addr);return true;
+    }
+    case MN_BRA: case MN_BSR: case MN_Bcc: case MN_DBcc:
+        if(!ins->has_target)return false;
+        if(ins->mnemonic==MN_BRA) {
+            fprintf(f,"  ctx->charge=10; g_cpu.PC=0x%06Xu;\n",ins->target_addr&0xFFFFFFu);
+        } else if(ins->mnemonic==MN_BSR) {
+            fprintf(f,"  ctx->charge=18; g_cpu.A[7]-=4; m68k_write32(g_cpu.A[7],0x%06Xu); g_cpu.PC=0x%06Xu;\n",next,ins->target_addr&0xFFFFFFu);
+        } else if(ins->mnemonic==MN_Bcc) {
+            fprintf(f,"  if(%s){ctx->charge=10;g_cpu.PC=0x%06Xu;}else ctx->charge=%u;\n",
+                    bcc_cond_expr((ins->words[0]>>8)&15),ins->target_addr&0xFFFFFFu,ins->word_count==1?8u:12u);
+        } else {
+            fprintf(f,"  if(!(%s)){ uint16_t low=(uint16_t)(g_cpu.D[%u]-1u);\n"
+                      "    g_cpu.D[%u]=(g_cpu.D[%u]&0xFFFF0000u)|low;\n"
+                      "    if(low!=0xFFFFu){ctx->charge=10;g_cpu.PC=0x%06Xu;}else ctx->charge=14;\n"
+                      "  }else ctx->charge=12;\n",bcc_cond_expr((ins->words[0]>>8)&15),
+                      (unsigned)ins->reg,(unsigned)ins->reg,(unsigned)ins->reg,ins->target_addr&0xFFFFFFu);
+        }
+        return true;
+    case MN_JMP: case MN_JSR: {
+        bool call=ins->mnemonic==MN_JSR;
+        unsigned cost=step_jump_cost((unsigned)ins->src_ea,call);
+        if(!cost)return false;
+        emit_ea_addr_ex(f,ins,ins->src_ea,&er,expr,true);
+        fprintf(f,"  { uint32_t target=(%s)&0xFFFFFFu; ctx->charge=%u;\n",expr,cost);
+        if(call)fprintf(f,"    g_cpu.A[7]-=4; m68k_write32(g_cpu.A[7],0x%06Xu);\n",next);
+        fprintf(f,"    g_cpu.PC=target; }\n");return true;
+    }
+    case MN_MOVE_USP:
+        fprintf(f,"  if(!m68k_step_supervisor(ctx))return; ctx->charge=4;\n");
+        if(ins->words[0]&8)fprintf(f,"  g_cpu.A[%u]=g_cpu.USP;\n",(unsigned)ins->reg);
+        else fprintf(f,"  g_cpu.USP=g_cpu.A[%u];\n",(unsigned)ins->reg);
+        return true;
+    case MN_MOVE_SR:
+        if(!ins->dst_is_ea) {
+            fprintf(f,"  if(!m68k_step_supervisor(ctx))return;\n");
+            fprintf(f,"  ctx->charge=%u;\n",12u+step_operand_cost((unsigned)ins->src_ea,false));
+            emit_ea_load(f,ins,ins->src_ea,M68K_SIZE_W,&er,tmp,expr);
+            fprintf(f,"  m68k_step_set_sr(ctx,(uint16_t)(%s));\n",expr);
+        } else {
+            unsigned cost=(ins->src_ea>>3)==0?6u:8u+step_operand_cost((unsigned)ins->src_ea,false);
+            fprintf(f,"  ctx->charge=%u;\n",cost);
+            emit_ea_store(f,ins,ins->src_ea,M68K_SIZE_W,&er,"g_cpu.SR");
+        }
+        return true;
+    case MN_MOVE_CCR:
+        if(!ins->dst_is_ea)return false; /* MOVE to CCR is straight-line. */
+        /* MOVE from CCR is a 68010 instruction, illegal on the CD's 68000. */
+        fprintf(f,"  m68k_step_exception(ctx,4,0x%06Xu,34);\n",ins->addr);return true;
+    case MN_ORI_TO_SR: case MN_ANDI_TO_SR: case MN_EORI_TO_SR: {
+        const char *op=ins->mnemonic==MN_ORI_TO_SR?"|":ins->mnemonic==MN_ANDI_TO_SR?"&":"^";
+        fprintf(f,"  if(!m68k_step_supervisor(ctx))return;\n"
+                  "  ctx->charge=20;\n"
+                  "  m68k_step_set_sr(ctx,(uint16_t)(g_cpu.SR%s0x%04Xu));\n",op,(unsigned)(ins->imm32&65535));return true;
+    }
+    case MN_DIVU: case MN_DIVS: {
+        AddrSet instructions={0};bool skip=false;int stack_accounting=0;
+        /* Nominal nonzero costs; data-dependent divide timing still needs
+         * qualification. Zero division enters the real vector-five frame. */
+        fprintf(f,"  ctx->charge=%u;\n",(ins->mnemonic==MN_DIVU?140u:158u)+step_operand_cost((unsigned)ins->src_ea,false));
+        emit_instr(f,rom,ins,&instructions,&skip,&stack_accounting,"<step>",ins->addr,true);
+        addrset_free(&instructions);return !skip;
+    }
+    case MN_CHK: {
+        unsigned ea=step_operand_cost((unsigned)ins->src_ea,false);
+        emit_ea_load(f,ins,ins->src_ea,M68K_SIZE_W,&er,tmp,expr);
+        fprintf(f,"  ctx->charge=%u; { int16_t value=(int16_t)g_cpu.D[%u], bound=(int16_t)(%s);\n"
+                  "    if(value<0){g_cpu.SR|=8u;m68k_step_exception(ctx,6,g_cpu.PC,%u);}\n"
+                  "    else if(value>bound){g_cpu.SR&=(uint16_t)~8u;m68k_step_exception(ctx,6,g_cpu.PC,%u);} }\n",
+                  10u+ea,(unsigned)ins->reg,expr,40u+ea,40u+ea);return true;
+    }
+    default:return false;
+    }
+}
+
+bool codegen_emit_step_operation(FILE *f,const GenesisRom *rom,const M68KInstr *ins)
+{
+    if(!f || !rom || !ins || !ins->word_count)return false;
+    const WsSite *saved_sites=s_ws_sites;
+    int saved_count=s_ws_site_count;
+    bool saved_reverse=s_reverse_debug;
+    const char *saved_name=s_diag_func_name;
+    uint32_t saved_addr=s_diag_func_addr;
+    const M68KInstr *saved_ins=s_diag_instr;
+    s_ws_sites=NULL;s_ws_site_count=0;s_reverse_debug=false;
+    s_diag_func_name="<step>";s_diag_func_addr=ins->addr;s_diag_instr=ins;
+    bool handled=emit_step_control(f,rom,ins);
+    s_ws_sites=saved_sites;s_ws_site_count=saved_count;s_reverse_debug=saved_reverse;
+    s_diag_func_name=saved_name;s_diag_func_addr=saved_addr;s_diag_instr=saved_ins;
+    if(ferror(f))return false;
+    return handled || codegen_emit_step_semantics(f,rom,ins);
 }
 
 static void emit_decls_preamble(FILE *f) {
@@ -5137,7 +5289,7 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
             if (s_reverse_debug)
                 fprintf(f_func, "  rdb_on_insn(0x%06Xu);\n", pc);
             emit_instr(f_func, rom, &instr, &instrs, &skip_until_label, &has_sp_adjust,
-                       name, func_addr);
+                       name, func_addr, false);
 
             /* Contextual recompiler: accumulate cycles and check for
              * pending VBlank.  The runtime maintains g_cycle_accumulator

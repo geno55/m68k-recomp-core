@@ -54,3 +54,11 @@ void codegen_set_dump_functions_path(const char *path);
  */
 bool codegen_emit_step_semantics(FILE *out, const GenesisRom *rom,
                                  const M68KInstr *instruction);
+
+/* MC68000 operation for runtime/m68k_step. Bind g_cpu/memory to a context
+ * parameter named `ctx`. The runtime supplies guarded instruction bytes,
+ * the next PC and initial cycle cost. This adds real guest control transfers
+ * and supervisor operations to the shared straight-line semantics. Unknown
+ * operations return false, never a no-op. */
+bool codegen_emit_step_operation(FILE *out, const GenesisRom *rom,
+                                 const M68KInstr *instruction);
