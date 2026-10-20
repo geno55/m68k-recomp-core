@@ -44,6 +44,9 @@ needs qualification.
 The shared DIVU emitter now rejects quotient 65536 as overflow rather than
 truncating it to zero. Division by zero in the legacy function ABI reports its
 unimplemented vector-five exception loudly instead of silently continuing.
+The shared EA emitter also keeps byte accesses through A7 aligned by stepping
+two bytes, and CMPM increments its source before reading its destination when
+the two address registers alias. Both apply to established and step emission.
 
 `runtime/m68k_step` provides a portable MC68000 execution context for those
 generated operations: independent registers/stacks, physical memory callbacks,

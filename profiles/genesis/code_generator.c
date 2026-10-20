@@ -403,7 +403,7 @@ static void emit_ea_load_ex(FILE *f, const M68KInstr *instr, int ea, M68KSize sz
     int reg  = ea & 7;
     const char *ct = size_ctype(sz);
     const char *rf = size_read_fn(sz);
-    int sb = size_bytes(sz);
+    int sb = reg==7 && sz==M68K_SIZE_B ? 2 : size_bytes(sz);
 
     switch (mode) {
     case 0: /* Dn */
@@ -634,7 +634,7 @@ static void emit_ea_store_ex(FILE *f, const M68KInstr *instr, int ea, M68KSize s
     const char *ct  = size_ctype(sz);
     const char *wf  = size_write_fn(sz);
     uint32_t    msk = size_mask(sz);
-    int         sb  = size_bytes(sz);
+    int         sb  = reg==7 && sz==M68K_SIZE_B ? 2 : size_bytes(sz);
     (void)instr;
 
     switch (mode) {
@@ -3215,9 +3215,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
 
     /* ------------------------------------------------------------------ */
     case MN_CMPM: {
-        /* CMPM (Ay)+,(Ax)+ — read both via post-increment, compute
-         * Ax-source - Ay-source as a CMP, set flags, then advance both
-         * address registers. X is unchanged (same as CMP).
+        /* CMPM (Ay)+,(Ax)+ — read/increment source, then read/increment
+         * destination. This order matters when Ax and Ay are the same.
+         * Compute destination - source as CMP; X is unchanged.
          *
          * 68K quirk: byte-size post-increment on A7 increments by 2
          * to keep the supervisor stack aligned. CMPM (A7)+,(A7)+ is
@@ -3233,20 +3233,20 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
         snprintf(res, sizeof(res), "_%06Xr", addr);
         fprintf(f,
             "  { %s _cmpm_s = (%s)%s(g_cpu.A[%d]);\n"
+            "    g_cpu.A[%d] += %d;\n"
             "    %s _cmpm_d = (%s)%s(g_cpu.A[%d]);\n"
+            "    g_cpu.A[%d] += %d;\n"
             "    %s %s = (%s)(_cmpm_d - _cmpm_s);\n",
             ct, ct, rf, ay,
+            ay, ay_inc,
             ct, ct, rf, ax,
+            ax, ax_inc,
             ct, res, ct);
         char da[64], db[64];
         snprintf(da, sizeof(da), "_cmpm_d");
         snprintf(db, sizeof(db), "_cmpm_s");
         emit_flags_cmp(f, da, db, res, sz);
-        fprintf(f,
-            "    g_cpu.A[%d] += %d;\n"
-            "    g_cpu.A[%d] += %d;\n"
-            "  }\n",
-            ay, ay_inc, ax, ax_inc);
+        fprintf(f,"  }\n");
         break;
     }
 
