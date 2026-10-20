@@ -11,7 +11,7 @@ typedef enum { M68K_BUS_OK=1, M68K_BUS_WAIT=2, M68K_BUS_FAULT=3 } M68kStepBusRes
 typedef enum {
     M68K_STEP_OK=0, M68K_STEP_MISS, M68K_STEP_STOPPED,
     M68K_STEP_BUS_ERROR, M68K_STEP_ADDRESS_ERROR, M68K_STEP_NO_WAIT_HANDLER,
-    M68K_STEP_REENTERED
+    M68K_STEP_REENTERED, M68K_STEP_UNSUPPORTED
 } M68kStepResult;
 enum { M68K_STEP_AUTOVECTOR=256 };
 
@@ -80,6 +80,11 @@ typedef struct {
 void m68k_step_init(M68kStepContext *,const M68kStepBus *,void *user);
 M68kStepResult m68k_step_reset(M68kStepContext *);
 M68kStepResult m68k_step_execute(M68kStepContext *,const M68kStepEntry *);
+/* Runtime correctness floors use the same exception/WAIT/trace boundary.
+ * The callback decodes current bytes and sets PC/charge; no stale entry or
+ * process-global CPU binding is used. Unsupported semantics must halt. */
+M68kStepResult m68k_step_execute_live(M68kStepContext *,M68kStepOperation);
+void m68k_step_unimplemented(M68kStepContext *);
 int m68k_step_module_valid(const M68kStepModule *);
 M68kStepResult m68k_step_module_execute(M68kStepContext *,const M68kStepModule *);
 /* Architectural illegal/A-line/F-line operation for generated illegal entries. */
@@ -90,6 +95,7 @@ int m68k_step_interrupt(M68kStepContext *,unsigned level);
 
 uint8_t m68k_step_read8(M68kStepContext *,uint32_t);
 uint16_t m68k_step_read16(M68kStepContext *,uint32_t);
+uint16_t m68k_step_fetch16(M68kStepContext *,uint32_t);
 uint32_t m68k_step_read32(M68kStepContext *,uint32_t);
 void m68k_step_write8(M68kStepContext *,uint32_t,uint8_t);
 void m68k_step_write16(M68kStepContext *,uint32_t,uint16_t);

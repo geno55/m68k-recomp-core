@@ -39,6 +39,14 @@ uint32_t m68k_step_read32(M68kStepContext *c,uint32_t a)
     uint32_t hi=m68k_step_read16(c,a);
     return (hi<<16)|m68k_step_read16(c,a+2);
 }
+uint16_t m68k_step_fetch16(M68kStepContext *c,uint32_t a)
+{
+    uint16_t v=0;a&=0xFFFFFFu;
+    if(a&1){fault(c,M68K_STEP_ADDRESS_ERROR,a);return 0;}
+    if(!c->bus.fetch16){fault(c,M68K_STEP_BUS_ERROR,a);return 0;}
+    while(retry(c,c->bus.fetch16(c->user,a,&v),a,0)){}
+    return v;
+}
 void m68k_step_write8(M68kStepContext *c,uint32_t a,uint8_t v)
 {
     a&=0xFFFFFFu;
@@ -149,29 +157,32 @@ int m68k_step_interrupt(M68kStepContext *c,unsigned level)
     return 1;
 }
 
-M68kStepResult m68k_step_execute(M68kStepContext *c,const M68kStepEntry *entry)
+static M68kStepResult execute_operation(M68kStepContext *c,const M68kStepEntry *entry,M68kStepOperation operation)
 {
     if(c->fault_escape)return M68K_STEP_REENTERED;
     if(c->state.fault)return (M68kStepResult)c->state.fault;
     if(c->state.stopped)return M68K_STEP_STOPPED;
-    if(!entry || !entry->execute || !entry->cycles || !entry->word_count || entry->word_count>11 ||
-       entry->pc!=c->state.regs.PC || !c->bus.fetch16)return M68K_STEP_MISS;
+    if(!operation || !c->bus.fetch16)return M68K_STEP_MISS;
+    if(entry && (!entry->cycles || !entry->word_count || entry->word_count>11 ||
+       entry->pc!=c->state.regs.PC))return M68K_STEP_MISS;
     jmp_buf escape;c->fault_escape=&escape;
     if(setjmp(escape)) {
         c->fault_escape=NULL;
         return (M68kStepResult)c->state.fault;
     }
-    if(entry->pc&1)fault(c,M68K_STEP_ADDRESS_ERROR,entry->pc);
-    for(unsigned n=0;n<entry->word_count;++n) {
-        uint32_t a=(entry->pc+n*2)&0xFFFFFFu;uint16_t word=0;
-        while(retry(c,c->bus.fetch16(c->user,a,&word),a,0)){}
-        if(word!=entry->words[n]){c->fault_escape=NULL;return M68K_STEP_MISS;}
+    uint32_t pc=c->state.regs.PC;
+    if(entry) {
+        for(unsigned n=0;n<entry->word_count;++n) {
+            uint16_t word=m68k_step_fetch16(c,pc+n*2u);
+            if(word!=entry->words[n]){c->fault_escape=NULL;return M68K_STEP_MISS;}
+        }
     }
     int trace=(c->state.regs.SR&T)!=0;
-    c->state.instruction_pc=entry->pc;c->state.fault_opcode=entry->words[0];
-    c->state.exception_vector=0;c->charge=entry->cycles;
-    c->state.regs.PC=(entry->pc+entry->word_count*2)&0xFFFFFFu;
-    entry->execute(c);
+    c->state.instruction_pc=pc;
+    c->state.fault_opcode=entry?entry->words[0]:m68k_step_fetch16(c,pc);
+    c->state.exception_vector=0;c->charge=entry?entry->cycles:4;
+    c->state.regs.PC=(pc+(entry?entry->word_count*2u:2u))&0xFFFFFFu;
+    operation(c);
     if(trace && !c->state.exception_vector) {
         enter_exception(c,9,c->state.regs.PC);c->charge+=34;
     }
@@ -179,6 +190,12 @@ M68kStepResult m68k_step_execute(M68kStepContext *c,const M68kStepEntry *entry)
     c->fault_escape=NULL;
     return M68K_STEP_OK;
 }
+M68kStepResult m68k_step_execute(M68kStepContext *c,const M68kStepEntry *entry)
+{return execute_operation(c,entry,entry?entry->execute:NULL);}
+M68kStepResult m68k_step_execute_live(M68kStepContext *c,M68kStepOperation operation)
+{return execute_operation(c,NULL,operation);}
+void m68k_step_unimplemented(M68kStepContext *c)
+{fault(c,M68K_STEP_UNSUPPORTED,c->state.instruction_pc);}
 
 void m68k_step_illegal(M68kStepContext *c)
 {

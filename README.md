@@ -7,7 +7,8 @@ Shared clean-room Motorola 68000-family static-recompiler frontend used by
 The initial extraction deliberately preserves the two validated policy
 profiles while centralizing the genuinely common instruction layer:
 
-- `common/` contains the decoder, validator, and annotation reader.
+- `common/` contains the decoder, validator, annotation reader and shared
+  original-68000 nominal timing table.
 - `profiles/genesis/` preserves the mature plain-68000 Genesis discovery and
   code-emission policy.
 - `profiles/scc68070/` preserves CD-i's SCC68070 timing, exception, OS-9 trap,
@@ -47,6 +48,12 @@ unimplemented vector-five exception loudly instead of silently continuing.
 The shared EA emitter also keeps byte accesses through A7 aligned by stepping
 two bytes, and CMPM increments its source before reading its destination when
 the two address registers alias. Both apply to established and step emission.
+Memory CLR now performs the original 68000's discarded read before its zero
+write, keeping each EA update single across the read/modify/write operation.
+Register-count ROXL/ROXR use the current count register rather than an immediate
+field. The consumer's native/floor/Unicorn matrix covers 4,992 register-shift
+seeds; nominal charges are checked separately from the oracle, which supplies
+architectural state rather than hardware cycle observations.
 
 `runtime/m68k_step` provides a portable MC68000 execution context for those
 generated operations: independent registers/stacks, physical memory callbacks,
@@ -56,6 +63,13 @@ trace and emulated cycle counters. It contains no instruction decoder or
 interpreter. `m68k_recomp_step_sources()` and
 `m68k_recomp_step_include_dirs()` expose it to source-package consumers.
 The root CMake project also builds `m68k_step_runtime` and its synthetic tests.
+`m68k_step_execute_live()` exposes the same WAIT/exception/trace boundary to a
+consumer's current-byte correctness floor. Its callback owns decoding and
+PC/charge changes; `m68k_step_fetch16()` reads the current mapped instruction
+stream and `m68k_step_unimplemented()` reports unsupported semantics loudly.
+No decoder or process-global CPU binding is added to the context runtime.
+`m68k_recomp_decode_sources()` separately exposes decode/legality/nominal timing
+services, including `common/m68k_timing.h`, to such consumers.
 
 `M68kStepModule` registers sorted instruction entries with load-base/size/input
 CRC metadata. Descriptor validation is explicit; execution binary-searches the

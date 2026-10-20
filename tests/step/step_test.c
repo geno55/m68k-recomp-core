@@ -22,6 +22,14 @@ static void rte_op(M68kStepContext*c){m68k_step_rte(c);}
 static void read_wait(M68kStepContext*c){c->state.regs.D[0]=m68k_step_read16(c,0x600);}
 static void bad_read(M68kStepContext*c){c->state.regs.D[0]=m68k_step_read16(c,0x601);c->state.regs.D[1]=0xBAD;}
 static void reset_op(M68kStepContext*c){m68k_step_reset_devices(c);}
+static void live_immediate(M68kStepContext*c)
+{
+    CHECK(c->state.fault_opcode==0x303C);++c->state.regs.D[1];
+    uint16_t value=m68k_step_fetch16(c,c->state.instruction_pc+2);
+    c->state.regs.D[0]=(c->state.regs.D[0]&0xFFFF0000u)|value;
+    c->state.regs.PC=(c->state.instruction_pc+4)&0xFFFFFFu;c->charge=8;
+}
+static void unimplemented(M68kStepContext*c){m68k_step_unimplemented(c);c->state.regs.D[1]=0xBAD;}
 static M68kStepEntry entry(uint32_t pc,uint16_t word,M68kStepOperation fn,unsigned cycles)
 {M68kStepEntry e={0};e.pc=pc;e.words[0]=word;e.word_count=1;e.execute=fn;e.cycles=(uint16_t)cycles;return e;}
 
@@ -71,6 +79,22 @@ int main(void)
     CHECK(m68k_step_reset(&c)==M68K_STEP_OK);e.execute=reset_op;CHECK(m68k_step_execute(&c,&e)==M68K_STEP_OK && b.resets==1);
     CHECK(m68k_step_reset(&c)==M68K_STEP_OK);m68k_step_set_sr(&c,0);e.execute=rte_op;
     CHECK(m68k_step_execute(&c,&e)==M68K_STEP_OK && c.state.exception_vector==8 && c.state.regs.PC==0x400 && c.state.cycles==34);
+    /* A dynamic floor owns decoding, but shares the native WAIT/trace/fault
+     * boundary. Changed extension bytes are fetched fresh on each operation. */
+    CHECK(m68k_step_reset(&c)==M68K_STEP_OK);CHECK(write16(&b,0x200,0x303C)==M68K_BUS_OK);
+    CHECK(write16(&b,0x202,0x1234)==M68K_BUS_OK);
+    CHECK(m68k_step_execute_live(&c,live_immediate)==M68K_STEP_OK && c.state.regs.D[0]==0x1234 && c.state.regs.PC==0x204 && c.state.cycles==8);
+    c.state.regs.PC=0x200;CHECK(write16(&b,0x202,0x5678)==M68K_BUS_OK);
+    CHECK(m68k_step_execute_live(&c,live_immediate)==M68K_STEP_OK && c.state.regs.D[0]==0x5678 && c.state.regs.D[1]==2);
+    CHECK(m68k_step_reset(&c)==M68K_STEP_OK);c.state.regs.PC=0x5FE;
+    CHECK(write16(&b,0x5FE,0x303C)==M68K_BUS_OK);b.ready=0;unsigned waits_before=b.waits;
+    CHECK(m68k_step_execute_live(&c,live_immediate)==M68K_STEP_OK && b.waits==waits_before+1 && c.state.regs.D[1]==1 && c.state.regs.PC==0x602);
+    CHECK(m68k_step_reset(&c)==M68K_STEP_OK);m68k_step_set_sr(&c,0xA000);
+    CHECK(m68k_step_execute_live(&c,live_immediate)==M68K_STEP_OK && c.state.cycles==42 && c.state.exception_vector==9);
+    CHECK(m68k_step_read32(&c,c.state.regs.A[7]+2)==0x204);
+    CHECK(m68k_step_reset(&c)==M68K_STEP_OK);
+    CHECK(m68k_step_execute_live(&c,unimplemented)==M68K_STEP_UNSUPPORTED && !c.state.cycles && !c.state.instructions && !c.state.regs.D[1]);
+    CHECK(c.state.fault_address==0x200 && c.state.fault_opcode==0x303C && !c.fault_escape);
     puts("Explicit-PC byte guards, CPU control/stacks, interrupts, trace and resumable bus WAIT pass");
     return 0;
 }
