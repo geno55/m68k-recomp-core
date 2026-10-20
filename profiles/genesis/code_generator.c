@@ -4658,10 +4658,30 @@ bool codegen_emit_step_operation(FILE *f,const GenesisRom *rom,const M68KInstr *
     s_ws_sites=NULL;s_ws_site_count=0;s_reverse_debug=false;
     s_diag_func_name="<step>";s_diag_func_addr=ins->addr;s_diag_instr=ins;
     bool handled=emit_step_control(f,rom,ins);
+    if(!handled) {
+        switch(ins->mnemonic) {
+        case MN_LSL: case MN_LSR: case MN_ASL: case MN_ASR:
+        case MN_ROL: case MN_ROR: case MN_ROXL: case MN_ROXR:
+            if(!ins->mem_shift && (ins->words[0]&32u))
+                fprintf(f,"  ctx->charge=%u+2u*(g_cpu.D[%u]&63u);\n",
+                        ins->size==M68K_SIZE_L?8u:6u,(unsigned)ins->src_ea);
+            break;
+        case MN_Scc:
+            if((ins->src_ea>>3)==0)
+                fprintf(f,"  ctx->charge=(%s)?6u:4u;\n",bcc_cond_expr((ins->words[0]>>8)&15));
+            break;
+        default:break;
+        }
+    }
     s_ws_sites=saved_sites;s_ws_site_count=saved_count;s_reverse_debug=saved_reverse;
     s_diag_func_name=saved_name;s_diag_func_addr=saved_addr;s_diag_instr=saved_ins;
     if(ferror(f))return false;
     return handled || codegen_emit_step_semantics(f,rom,ins);
+}
+
+unsigned codegen_step_nominal_cycles(const M68KInstr *ins)
+{
+    return ins && ins->word_count ? (unsigned)estimate_cycles_prm(ins) : 0;
 }
 
 static void emit_decls_preamble(FILE *f) {

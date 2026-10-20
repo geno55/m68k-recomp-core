@@ -54,6 +54,18 @@ interpreter. `m68k_recomp_step_sources()` and
 `m68k_recomp_step_include_dirs()` expose it to source-package consumers.
 The root CMake project also builds `m68k_step_runtime` and its synthetic tests.
 
+`M68kStepModule` registers sorted instruction entries with load-base/size/input
+CRC metadata. Descriptor validation is explicit; execution binary-searches the
+PC and checks all currently mapped instruction bytes. Competing modules at the
+same PC can be tried after a miss. `m68k_step_bind.h` supplies generated-operation
+bindings to the explicit `ctx` parameter, without a global or thread-local CPU.
+The original-model `m68k_decode_68000()` preserves `$6xFF` as a one-word -1
+branch and treats MOVEC as one-word illegal, while retaining the existing
+family decoder for established consumers. Invalid JMP/JSR/LEA/PEA EAs now fail
+the common validator. `codegen_step_nominal_cycles()` exposes manual-derived
+initial costs; generated branches, register shifts and register Scc charge
+their actual dynamic path/count.
+
 This runtime currently stops and reports bus/address faults; construction of
 MC68000 group-zero frames remains unimplemented. Snapshots must occur between
 completed instructions. A complete step frontend, code registry/correctness

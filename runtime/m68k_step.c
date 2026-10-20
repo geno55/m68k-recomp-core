@@ -179,3 +179,38 @@ M68kStepResult m68k_step_execute(M68kStepContext *c,const M68kStepEntry *entry)
     c->fault_escape=NULL;
     return M68K_STEP_OK;
 }
+
+void m68k_step_illegal(M68kStepContext *c)
+{
+    unsigned top=c->state.fault_opcode>>12;
+    m68k_step_exception(c,top==10?10u:top==15?11u:4u,c->state.instruction_pc,34);
+}
+
+int m68k_step_module_valid(const M68kStepModule *m)
+{
+    if(!m || !m->name || !m->image_size || m->image_base>0xFFFFFFu ||
+       m->image_size>0x1000000u-m->image_base || (m->count && !m->entries))return 0;
+    for(size_t n=0;n<m->count;++n) {
+        const M68kStepEntry *e=&m->entries[n];
+        if(!e->execute || !e->word_count || e->word_count>11 || !e->cycles ||
+           (e->pc&1u) || e->pc<m->image_base ||
+           e->pc-m->image_base>=m->image_size ||
+           e->word_count*2u>m->image_size-(e->pc-m->image_base) ||
+           (n && m->entries[n-1].pc>=e->pc))return 0;
+    }
+    return 1;
+}
+
+M68kStepResult m68k_step_module_execute(M68kStepContext *c,const M68kStepModule *m)
+{
+    if(!m || !m->entries)return M68K_STEP_MISS;
+    size_t lo=0,hi=m->count;
+    while(lo<hi) {
+        size_t mid=lo+(hi-lo)/2;
+        uint32_t pc=m->entries[mid].pc;
+        if(pc<c->state.regs.PC)lo=mid+1;
+        else if(pc>c->state.regs.PC)hi=mid;
+        else return m68k_step_execute(c,&m->entries[mid]);
+    }
+    return M68K_STEP_MISS;
+}

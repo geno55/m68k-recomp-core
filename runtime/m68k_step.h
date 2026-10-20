@@ -68,9 +68,22 @@ typedef struct {
     M68kStepOperation execute;
 } M68kStepEntry;
 
+/* Entries are strictly increasing by guest PC. Image identity is diagnostic;
+ * execution always checks current mapped opcode AND extension bytes. */
+typedef struct {
+    const char *name;
+    uint32_t image_base, image_size, image_crc32;
+    const M68kStepEntry *entries;
+    size_t count;
+} M68kStepModule;
+
 void m68k_step_init(M68kStepContext *,const M68kStepBus *,void *user);
 M68kStepResult m68k_step_reset(M68kStepContext *);
 M68kStepResult m68k_step_execute(M68kStepContext *,const M68kStepEntry *);
+int m68k_step_module_valid(const M68kStepModule *);
+M68kStepResult m68k_step_module_execute(M68kStepContext *,const M68kStepModule *);
+/* Architectural illegal/A-line/F-line operation for generated illegal entries. */
+void m68k_step_illegal(M68kStepContext *);
 /* Update physical IRQ pins and accept an eligible autovectored/vectored IRQ.
  * Call only between instructions. Level 7 is edge triggered. */
 int m68k_step_interrupt(M68kStepContext *,unsigned level);

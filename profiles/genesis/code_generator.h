@@ -62,3 +62,7 @@ bool codegen_emit_step_semantics(FILE *out, const GenesisRom *rom,
  * operations return false, never a no-op. */
 bool codegen_emit_step_operation(FILE *out, const GenesisRom *rom,
                                  const M68KInstr *instruction);
+/* Initial manual-derived cost for an explicit-PC operation. Dynamic branches,
+ * shifts and conditional sets override it in the emitted operation. Multiply/
+ * divide still use documented nominal costs until independently qualified. */
+unsigned codegen_step_nominal_cycles(const M68KInstr *instruction);
